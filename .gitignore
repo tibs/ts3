@@ -1,0 +1,15 @@
+
+# Editor artefacts
+*~
+*.swo
+*.swp
+
+# Python artefacts
+*.pyc
+*.pyo
+
+# Something to do with test running
+__pycache__
+
+# Downloaded example data
+data/ed24p_11.*
