@@ -7,7 +7,7 @@
 # python-bitstring is from http://code.google.com/p/python-bitstring/
 from bitstring import BitArray, BitStream
 
-TS_PACKET_SIZE = 188
+TS_PACKET_LEN = 188
 
 __all__ = []
 
@@ -38,8 +38,20 @@ def _as_strings(things):
     else:
         return ', '.join(map(repr, things[:-1])) + ' or ' + repr(things[-1])
 
+def _hexify_array(bytes):
+    """Return a representation of an array of bytes as a hex values string.
+    """
+    words = []
+    for val in bytes:
+        words.append('{:#02x}'.format(val))
+    return ''.join(words)
+
 @export
-class TSReadError(Exception):
+class TSError(Exception):
+    pass
+
+@export
+class TSReadError(TSError):
     """An exception raised when an error occurs reading a TS file.
 
     '.filename' is the name of the file, '.data' is whatever data *was* read.
@@ -55,7 +67,7 @@ class TSReadError(Exception):
     def __str__(self):
         return "Error reading from TS file {!r}, read {} byte{} insted of {}".format(
                 self.filename, len(self.data), '' if len(self.data) == 1 else 's',
-                TS_PACKET_SIZE)
+                TS_PACKET_LEN)
 
 @export
 class TSReader:
@@ -86,6 +98,8 @@ class TSReader:
             necessary. If the file already exists, any content is lost.
           - 'x': Open the file for read and write. The file must not exist.
         """
+        self.packet_count = 0
+        self.initial_offset = 0
         self.filename = filename
         if mode not in (self._mode_translations.keys()):
             raise ValueError('Mode {} is not {}'.format(repr(mode)),
@@ -112,21 +126,6 @@ class TSReader:
             # so just allow the exception to be re-raised
             return False
 
-    def read_raw(self):
-        """Read the next 188 bytes from the file, and return them.
-
-        Returns 188 bytes, or an empty bytestring for EOF.
-
-        If some number of bytes less than 188 is read (presumably because the
-        file ends with a truncated packet), then a TSReadError will be raised,
-        with the bytes read as its 'data' value.
-        """
-        bytes = self.file.read(TS_PACKET_SIZE)
-        if len(bytes) in (0, TS_PACKET_SIZE):
-            return bytes
-        else:
-            raise TSReadError(self.filename, bytes)
-
     def read(self):
         """Read the next TS packet from the file.
 
@@ -136,11 +135,15 @@ class TSReader:
         file ends with a truncated packet), then a TSReadError will be raised,
         with the bytes read as its 'data' value.
         """
-        bytes = self.file.read(TS_PACKET_SIZE)
+        bytes = self.file.read(TS_PACKET_LEN)
         if len(bytes) == 0:
             return None
-        elif len(bytes) == TS_PACKET_SIZE:
-            return TSPacket(bytes)
+        elif len(bytes) == TS_PACKET_LEN:
+            # The packet index (stored on the TSPacket) starts at 0
+            packet = TSPacket(bytes, self.packet_count,
+                              self.packet_count*TS_PACKET_LEN+self.initial_offset)
+            self.packet_count += 1
+            return packet
         else:
             raise TSReadError(self.filename, bytes)
 
@@ -148,11 +151,61 @@ class TSReader:
 @export
 class TSPacket:
     """A Transport Stream packet.
-
     """
 
-    def __init__(self, data):
-        self.data = data
+    # The following are lazily calculated if necessary
+    _already_split = None
+    _pusi = None
+    _adapt = None
+    _payload = None
+
+    # Ditto with looking for a PCR
+    _checked_for_pcr = False
+    _pcr = None
+
+    def __init__(self, buffer, index=None, offset=None):
+        self.data = buffer
+        self.offset = offset
+        self.index = index
+        # It's not a TS packet if it doesn't start with 0x47
+        if buffer[0] != 0x47:
+            raise TSError('First byte of TS packet is {:#02x}, not 0x47'%(buffer[0]))
+        # And the length is well defined
+        if len(buffer) != TS_PACKET_LEN:
+            raise TSError('TS packet is %d bytes long, not %d'%(len(buffer), TS_PACKET_LEN))
+        # The PID is useful to know early on, and fairly easy to work out
+        self.pid = ((buffer[1] & 0x1F) << 8) | buffer[2]
+
+    def is_padding(self):
+        return self.pid == 0x1fff
+
+    def __str__(self):
+        #self._split()
+        words = []
+        words.append('TS packet PID {:04x}'.format(self.pid))
+        #if self.pusi:
+        #    words.append('[pusi]')
+        #if self.adapt and self.payload:
+        #    words.apend('A+P')
+        #elif self.adapt:
+        #    words.append('A')
+        #elif self.payload:
+        #    words.append('P')
+        data = self.data[3:]
+        for val in data[:11]:
+            words.append('{:02x}'.format(val))
+        if len(data) > 11:
+            words.append('...')
+        return ' '.join(words)
+
+    def __repr__(self):
+        return 'TSPacket("%s")'%_hexify_array(self.data)
+
+    def __eq__(self, other):
+        return self.data == other.data
+
+    def __ne__(self, other):
+        return self.data != other.data
 
 if __name__ == '__main__':
     print('Hello')
