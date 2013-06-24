@@ -70,8 +70,10 @@ class TSReadError(TSError):
                 TS_PACKET_LEN)
 
 @export
-class TSReader:
+class TS:
     """A class to read and/or write packets.
+
+    A Transport Stream (TSStream would be silly)
 
     You may use this with 'with' - for instance::
 
@@ -138,7 +140,7 @@ class TSReader:
             raise TSReadError(self.filename, bytes)
 
 @export
-class TSFileReader(TSReader):
+class TSFile(TS):
     """A class to read and/or write packets from/to a TS file.
 
     You may use this with 'with' - for instance::
