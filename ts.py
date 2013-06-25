@@ -54,7 +54,8 @@ class TSError(Exception):
 class TSReadError(TSError):
     """An exception raised when an error occurs reading a TS file.
 
-    '.filename' is the name of the file, '.data' is whatever data *was* read.
+    '.filename' is the name of the file, if any, and '.data' is whatever data
+    *was* read.
 
     The assumption is that this is due to a short read (normally at the end of
     the file)
@@ -101,7 +102,17 @@ class TS:
 
         'offset' may be given to indicate the byte offset in the stream.
         """
-        self.stream = stream
+        # I find myself incorrectly trying to use TS(<filename>), so let's
+        # make some attempt to catch that
+        if not hasattr(stream, 'read'):
+            if isinstance(stream, str):
+                raise ValueError('First argument to TS, {!r}, is a string, which does not have a'
+                                 ' "read" method - did you want TSFile instead?'.format(stream))
+            else:
+                raise ValueError('First argument to TS, {!r}, does not have a'
+                                 ' "read" method'.format(stream))
+        self._stream = stream
+        self.filename = None    # for we are not a file
         self.initial_offset = offset
         self.packet_count = count
 
@@ -127,17 +138,50 @@ class TS:
         file ends with a truncated packet), then a TSReadError will be raised,
         with the bytes read as its 'data' value.
         """
-        bytes = self.stream.read(TS_PACKET_LEN)
-        if len(bytes) == 0:
+        buffer = self._stream.read(TS_PACKET_LEN)
+        if len(buffer) == 0:
             return None
-        elif len(bytes) == TS_PACKET_LEN:
+        elif len(buffer) == TS_PACKET_LEN:
             # The packet index (stored on the TSPacket) starts at 0
-            packet = TSPacket(bytes, self.packet_count,
+            packet = TSPacket(buffer, self.packet_count,
                               self.packet_count*TS_PACKET_LEN+self.initial_offset)
             self.packet_count += 1
             return packet
         else:
-            raise TSReadError(self.filename, bytes)
+            raise TSReadError(self.filename, buffer)
+
+    def __iter__(self):
+        """Our default iterator returns all TS packets.
+        """
+        while True:
+            next_packet = self.read()
+            if next_packet:
+                yield next_packet
+            else:
+                return
+
+    def pid_filter(self, pids):
+        """An iterator that returns only TS packets with the selected pids.
+
+        'pids' should be a sequence of PIDs (something that one can use 'in'
+        on).
+        """
+        while True:
+            buffer = self._stream.read(TS_PACKET_LEN)
+            if len(buffer) == 0:
+                return
+            elif len(buffer) == TS_PACKET_LEN:
+                pid = ((buffer[1] & 0x1F) << 8) | buffer[2]
+                if pid in pids:
+                    packet = TSPacket(buffer, self.packet_count,
+                                      self.packet_count*TS_PACKET_LEN+self.initial_offset)
+                    self.packet_count += 1
+                    yield packet
+                else:
+                    self.packet_count += 1      # count it anyway
+            else:
+                raise TSReadError(self.filename, bytes)
+
 
 @export
 class TSFile(TS):
