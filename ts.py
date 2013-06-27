@@ -54,20 +54,20 @@ class TSError(Exception):
 class TSReadError(TSError):
     """An exception raised when an error occurs reading a TS file.
 
-    '.filename' is the name of the file, if any, and '.data' is whatever data
+    '.name' is the name of the file, if any, and '.data' is whatever data
     *was* read.
 
     The assumption is that this is due to a short read (normally at the end of
     the file)
     """
 
-    def __init__(self, filename, data):
-        self.filename = filename
+    def __init__(self, name, data):
+        self.name = name
         self.data = data
 
     def __str__(self):
         return "Error reading from TS file {!r}, read {} byte{} insted of {}".format(
-                self.filename, len(self.data), '' if len(self.data) == 1 else 's',
+                self.name, len(self.data), '' if len(self.data) == 1 else 's',
                 TS_PACKET_LEN)
 
 @export
@@ -78,10 +78,20 @@ class TS:
 
     You may use this with 'with' - for instance::
 
-        with TSReader(stream) as f:
-            first_packet = f.read()
+        with TS(stream) as s:
+            first_packet = s.read()
 
     although (at the moment) exiting the 'with' clause does nothing.
+
+    You can also use it with for:
+
+        for packet in TS(stream):
+            print(packet)
+
+    and you can filter on pids::
+
+        g = TS(stream).pid_filter([0])
+        p = next(g)
 
     The TSReader instance will maintain its own count of packets (as
     .num_packets_read). This plus the .initial_offset can be used to calculate
@@ -93,7 +103,8 @@ class TS:
     its read/write position, these will be inaccurate.
     """
 
-    def __init__(self, stream, initial_offset=0, num_packets_already_read=0):
+    def __init__(self, stream, name='<TS stream>',
+                 initial_offset=0, num_packets_already_read=0):
         """Set up a stream for TS reading or writing.
 
         'stream' must have a suitable 'read' method, if reading is to be done,
@@ -111,13 +122,13 @@ class TS:
             else:
                 raise ValueError('First argument to TS, {!r}, does not have a'
                                  ' "read" method'.format(stream))
-        self._file = stream
-        self.filename = None    # for we are not a file
+        self._stream = stream
+        self.name = name
         self.initial_offset = initial_offset
         self.num_packets_read = num_packets_already_read
 
     def __str__(self):
-        return 'TS reader for {!r}'.format(self.stream)
+        return 'TS reader for {!r}'.format(self._stream)
 
     def __enter__(self):
         return self
@@ -138,14 +149,14 @@ class TS:
         file ends with a truncated packet), then a TSReadError will be raised,
         with the bytes read as its 'data' value.
         """
-        buffer = self._file.read(TS_PACKET_LEN)
+        buffer = self._stream.read(TS_PACKET_LEN)
         if len(buffer) == 0:
             return None
         elif len(buffer) == TS_PACKET_LEN:
             self.num_packets_read += 1
             return buffer
         else:
-            raise TSReadError(self.filename, buffer)
+            raise TSReadError(self.name, buffer)
 
     def read(self):
         """Read the next TS packet from the stream.
@@ -233,16 +244,15 @@ class TSFile(TS):
             raise ValueError('Mode {} is not {}'.format(repr(mode)),
                              _as_strings(sorted(self._mode_translations.keys())))
         stream = open(filename, self._mode_translations[mode])
-        super().__init__(stream)
-        self.filename = filename
+        super().__init__(stream, filename)
         self.mode = mode
 
     def __str__(self):
-        if self.file:
-            return 'TS reader for {!r}, open for {}'.format(self.filename,
+        if self._stream:
+            return 'TS reader for {!r}, open for {}'.format(self.name,
                     self._mode_explanations[self.mode])
         else:
-            return 'TS reader for {!r}, closed'.format(self.filename)
+            return 'TS reader for {!r}, closed'.format(self.name)
 
     def __exit__(self, exc_type, exc_value, traceback):
         if self.file:
