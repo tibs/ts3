@@ -5,7 +5,7 @@
 """
 
 # python-bitstring is from http://code.google.com/p/python-bitstring/
-from bitstring import BitArray, BitStream
+from bitstring import ConstBitStream
 
 TS_PACKET_LEN = 188
 
@@ -322,6 +322,21 @@ class TSPacket:
 
     def __ne__(self, other):
         return self.data != other.data
+
+    def _split(self):
+        bits = ConstBitStream(self.data)
+        print(bits)
+        sync_byte = bits.read(8)        # or I could use an offset to ignore this...
+        transport_error_indicator = bits.read(1)
+        payload_unit_start_indicator = bits.read(1)
+        transport_priority = bits.read(1)
+        pid = bits.read(13)
+        transport_scrambling_control = bits.read(2)
+        adaptation_field_control = bits.read(2)
+        continuity_counter = bits.read(4)
+        print(sync_byte, transport_error_indicator, payload_unit_start_indicator,
+              transport_priority, pid, transport_scrambling_control,
+              adaptation_field_control, continuity_counter)
 
 if __name__ == '__main__':
     print('Hello')
