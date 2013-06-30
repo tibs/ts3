@@ -263,6 +263,29 @@ class TSFile(TS):
             # so just allow the exception to be re-raised
             return False
 
+class ValidatingConstBitStream(ConstBitStream):
+
+    def read_const(self, size, name, required_value):
+        val = self.read(size)
+        if val != required_value:
+            raise ValueError('Value {!r} of size {} is {} instead of {:#x}'.format(name,
+                             size, val, required_value))
+        return val
+
+    def read_range(self, size, name, min, max):
+        val = self.read(size)
+        if not (min <= val <= max):
+            raise ValueError('Value {!r} of size {} is {} instead of {:#x}..{:#x}'.format(name,
+                             size, val, min, max))
+        return val
+
+class ForgivingConstBitStream(ConstBitStream):
+
+    def read_const(self, size, name, required_value):
+        return self.read(size)
+
+    def read_range(self, size, name, min, max):
+        return self.read(size)
 
 @export
 class TSPacket:
@@ -279,10 +302,11 @@ class TSPacket:
     _checked_for_pcr = False
     _pcr = None
 
-    def __init__(self, buffer, index=None, offset=None):
+    def __init__(self, buffer, index=None, offset=None, validating=False):
         self.data = buffer
         self.offset = offset
         self.index = index
+        self.validating = validating
         # It's not a TS packet if it doesn't start with 0x47
         if buffer[0] != 0x47:
             raise TSError('First byte of TS packet is {:#02x}, not 0x47'%(buffer[0]))
@@ -324,9 +348,12 @@ class TSPacket:
         return self.data != other.data
 
     def _split(self):
-        bits = ConstBitStream(self.data)
+        if self.validating:
+            bits = ValidatingConstBitStream(self.data)
+        else:
+            bits = ForgivingConstBitStream(self.data)
         print(bits)
-        sync_byte = bits.read(8)        # or I could use an offset to ignore this...
+        sync_byte = bits.read_const(8, 'sync_byte', 0x47) # or I could use an offset to ignore this...
         transport_error_indicator = bits.read(1)
         payload_unit_start_indicator = bits.read(1)
         transport_priority = bits.read(1)
