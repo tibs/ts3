@@ -71,6 +71,27 @@ class TSReadError(TSError):
                 TS_PACKET_LEN)
 
 @export
+class TSClosedError(TSError):
+    """An exception raised when an error occurs reading a closed TS file.
+
+    '.name' is the name of the file, if any.
+
+    For instance:
+
+        with TSFile('somefile.ts') as f:
+            p = f.read()
+        p = f.read()
+
+    ...the second 'read' will give an error, as 'f' is closed.
+    """
+
+    def __init__(self, name):
+        self.name = name
+
+    def __str__(self):
+        return "Error reading from TS file {!r}, as it is closed".format(self.name)
+
+@export
 class TS:
     """A class to read and/or write packets.
 
@@ -149,6 +170,8 @@ class TS:
         file ends with a truncated packet), then a TSReadError will be raised,
         with the bytes read as its 'data' value.
         """
+        if self._stream is None:
+            raise TSClosedError(self.name)
         buffer = self._stream.read(TS_PACKET_LEN)
         if len(buffer) == 0:
             return None
@@ -255,9 +278,9 @@ class TSFile(TS):
             return 'TS reader for {!r}, closed'.format(self.name)
 
     def __exit__(self, exc_type, exc_value, traceback):
-        if self.file:
-            self.file.close()
-            self.file = None
+        if self._stream:
+            self._stream.close()
+            self._stream = None
         if traceback:
             # An exception occurred - we don't have any extra tidying up
             # so just allow the exception to be re-raised
@@ -352,7 +375,9 @@ class TSPacket:
             bits = ValidatingConstBitStream(self.data)
         else:
             bits = ForgivingConstBitStream(self.data)
+
         print(bits)
+
         sync_byte = bits.read_const(8, 'sync_byte', 0x47) # or I could use an offset to ignore this...
         transport_error_indicator = bits.read(1)
         payload_unit_start_indicator = bits.read(1)
@@ -361,15 +386,28 @@ class TSPacket:
         transport_scrambling_control = bits.read(2)
         adaptation_field_control = bits.read(2)
         continuity_counter = bits.read(4)
+
         print(sync_byte, transport_error_indicator, payload_unit_start_indicator,
               transport_priority, pid, transport_scrambling_control,
               adaptation_field_control, continuity_counter)
 
 if __name__ == '__main__':
     print('Hello')
-    a = BitArray('0xff01')
-    b = BitArray('0b110')
-    print(a)
-    print(b)
+
+    with TSFile('data/ed24p_11.ts') as f:
+        for p in f.pid_filter([0x32]):
+            print(p)
+            break
+
+        p = f.read()
+
+    p._split()
+    p.validating = True
+    p._split()
+
+    p = TSPacket([71] + 187*[0])
+    p._split()
+    p.validating = True
+    p._split()                  # Exception time
 
 # vim: set tabstop=8 softtabstop=4 shiftwidth=4 expandtab:
