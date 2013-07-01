@@ -1,0 +1,247 @@
+========================
+Using ts3, with doctests
+========================
+
+Introduction
+============
+This is intended as a narrative explanation of using ``ts3``, as my own
+exploration of how it might/should work, and also as a set of doctests, so
+that it will be nice, true and accurate.
+
+``ts3`` is intended as a new Python package for exploring and manipulating
+Transport Stream data. Transport Stream is defined in H.222, which is another
+name for ISO/IEC 13818, specifically *ISO/IEC 13818-1:2006/Amd.2:2008 (E)*,
+which is also known as *ITUT Rec. H.222.0 (05/2006)*. This is the version I
+have as PDF on the computer I'm working on.
+
+H.222 describes the "system level" used to wrap audio and video data, both for
+CDs (this is "Program Stream") and for satellite, cable and IP TV. I've
+already worked on some software for handling such data, tstools, which can be
+found at http://code.google.com/p/tstools/, and which describes itself thus:
+
+  This is a set of cross-platform command line tools for working with MPEG
+  data. 
+
+  The emphasis is on relatively simple tools which concentrate on MPEG (H.264
+  and H.262) data packaged according to H.222 (i.e., TS or PS), with a
+  particular interest in checking for conformance. 
+
+  Transport Stream (TS) is typically used for distribution of cable and
+  satellite data. Program Stream (PS) is typically used to store data on DVDs. 
+
+  The tools are focussed on: 
+
+  * Quick reporting of useful data (tsinfo, stream_type) 
+  * Giving a quick overview of the entities in the stream (esdots, psdots) 
+  * Reporting on TS packets (tsreport) or ES units/frames/fields (esreport) 
+  * Simple manipulation of stream data (es2ts, esfilter, esreverse, esmerge, ts2es) 
+  * Streaming of data, possibly with introduced errors (tsplay)
+
+tstools is written in C, although the some of the very early code was written
+in Python (and particularly, the code for aggregating H.264 NAL units).
+However, Python was too slow for many of the operations that tstools was
+needed for, so C it had to be.
+
+I did, however, start work on a Python wrapper for the project, using pyrex
+(or, currently, Cython). That stalled for various reasons, though, not least
+because if became difficult for me to see how to extend the wrapping in a tidy
+manner.
+
+Recently I had to work with tstools again, and it became clear how many of the
+design decisions I made at the time were not helpful - in particular, the over
+separation of the different layers (TS, PES, ES, frame), leading to
+difficulties in relating timestamps in TS and PES in particular. So I decided
+to take the opportunity to learn Python 3, and write what I wanted from
+scratch, and then perhaps look at whether projects such as Cython, Pypy and
+mypy could regain the speed I might be giving up.
+
+So, here we are.
+
+Dependencies
+============
+Parsing bit strings is a pain. Luckily, other people have worked on this, and
+so I'm taking advantage of that. Currently ts3 depends on python-bitstring,
+from http://code.google.com/p/python-bitstring/. python-bitstring is available
+under an MIT license.
+
+License
+=======
+I'm happy for anyone to use this code freely. However, it appears to be
+simpler to give an explicit license to a project, and at the moment I believe
+that ts3 will be under the MIT license. I'll add appropriate boiler plate
+later on.
+
+Getting started with ts3
+========================
+Here's what I do (I'm afraid this is untested on Windows)::
+
+  $ mkvirtualenv ts3    # (I use virtualenvwrapper - adjust if you don't)
+  $ workon ts3
+  $ pip install bitstring
+  $ cd ~/sw
+  $ git clone git@github.com:tibs/ts3.git
+  $ cd ts3
+  $ ./rundoctest.py ts.txt
+
+Test data
+=========
+It's difficult to work with video data without some examples. Unfortunately,
+good examples are hard to come by. tstools tried to get round that by
+providing a script to download some small pieces of data. I don't think that
+worked terribly well, so I am unashamedly going to write examples here that
+readers will not be able to reproduce, as they won't necessarily have the
+data.
+
+Files I expect to use are:
+
+* Elephant's Dream. This is open source video, so you should be able to get it
+  if you want. I'll explain how in a future edit of this text.
+* ``ed24p_11.ts``. This is the small fragment of Elephant's Dream that tstools
+  used as its main example. It's not very exciting for this purpose.
+* A mux of some BBC channels from <whatever year>. This is several gigabytes,
+  and it should be clear that there are several reasons for not making it
+  available!
+* A similar mux of some ITV channels.
+
+Getting started
+===============
+The ts3 package is called ``ts``. It is designed so that it is reasonable to
+say:
+
+  >>> from ts import *
+
+A Transport Stream file can be opened with:
+
+  >>> f = TSFile('data/ed24p_11.ts')
+
+which defaults to opening the file for read:
+
+  >>> print(f)
+  TS reader for 'data/ed24p_11.ts', open for read only
+
+It's also possible to use a ``with`` clause:
+
+  >>> with TSFile('data/ed24p_11.ts') as f:
+  ...    print(f)
+  TS reader for 'data/ed24p_11.ts', open for read only
+
+Unsurprisingly, outside the ``with`` clause, the file is no longer open:
+
+  >>> print(f)
+  TS reader for 'data/ed24p_11.ts', closed
+
+(I only mention that because I found myself trying to use the file after it
+had been explicitly closed the other day).
+
+Once one has opened a TS file, one can read packets from it:
+
+  >>> f = TSFile('data/ed24p_11.ts')
+  >>> p1 = f.read()
+  >>> p2 = f.read()
+  >>> print(p1)
+  TS packet PID 1fff 10 ff ff ff ff ff ff ff ff ff ff ...
+  >>> print(p2)
+  TS packet PID 1fff 10 ff ff ff ff ff ff ff ff ff ff ...
+
+The packets know their index (the first packet is index 0) and their offset
+within the file:
+
+  >>> print(p1.index, p1.offset)
+  0 0
+  >>> print(p2.index, p2.offset)
+  1 188
+
+It is also possible to iterate over the file:
+
+  >>> for p in f:
+  ...     print(p.index)
+  ...     if p.index > 4:
+  ...         break
+  2
+  3
+  4
+  5
+
+or to iterate over packets with particular PIDs:
+
+  >>> for p in f.pid_filter([0x32]):
+  ...     print('{}: {}'.format(p.index, p))
+  ...     break
+  71: TS packet PID 0032 14 00 00 01 bd 06 12 84 80 0f 21 ...
+
+Once a file is done with, we can close it explicity:
+
+  >>> f.close()
+  >>> print(f)
+  TS reader for 'data/ed24p_11.ts', closed
+
+.. note:: Inside the ``TSFile`` there is actually a ``TS`` instance, which
+   takes as its input a stream that has a ``read`` method (and ``write`` if
+   necessary). So, given a dummy buffer of TS data (actually, a Null packet):
+
+      >>> dummy_packet = bytes([0x47, 0x1f, 0xff, 0x10] + 184*[0xff])
+
+   we can read it as input:
+
+      >>> import io
+      >>> b = io.BytesIO(dummy_packet)
+      >>> t = TS(b)
+      >>> print(t)                                        # doctest: +ELLIPSIS
+      TS reader for <_io.BytesIO object at 0x...>
+      >>> dummy = t.read()
+      >>> print(dummy)
+      TS packet PID 1fff 10 ff ff ff ff ff ff ff ff ff ff ...
+
+Notes for the next bit:
+
+TS packets have an internal structure. That structure is determined using the
+bitstring package. TS packets can be dissected in validating or non-validating
+("forgiving") mode. In validating mode, incorrect reserved values cause some
+sort of report or error (at the moment, the first error found raises an
+exception, but this is probably over-stringent). In non-validating mode,
+simpler versions of the appropriate methods are used, in the hope this will
+not slow down non-validating reads as much.
+
+The dissection is done by a ``_split`` method, which is called the first time
+a non-basic property is requested from the TS packet instance (the basic
+property is the PID, which is fairly trivial to extract "the old fashioned
+way").
+
+The default is currently for validation to be off, but there is/will be a
+``validation`` keyword argument to any appropriate constructors (``TSPacket``
+has it already), and the value can be altered at runtime.
+
+So, for instance:
+
+  >>> dummy._split()
+  0x471fff10ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff...
+  0x47 0b0 0b0 0b0 0b1111111111111 0b00 0b01 0x0
+  >>> dummy.validating = True
+  >>> dummy._split()
+  0x471fff10ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff...
+  0x47 0b0 0b0 0b0 0b1111111111111 0b00 0b01 0x0
+
+*(note that the above printout of the packet is not ideal - clearly something
+is being miscounted in the overly simplistic __str__ method)*
+
+  >>> p = TSPacket([71] + 187*[0])
+  >>> p._split()
+  0x80000000000000000000000000000000000000000000000
+  0x80 0b0 0b0 0b0 0b0000000000000 0b00 0b00 0x0
+  >>> p.validating = True
+  >>> p._split()
+  Traceback (most recent call last):
+  ...
+  ValueError: Value 'sync_byte' of size 8 is 0x80 instead of 0x47
+
+TS packets are intended to be (treated as) immutable objects, instantiated
+from a 188 byte array, bytestring or whatever. A function will be provided to
+construct new 188 byte arrays with appropriate content (which is, after all,
+all that is needed to *write* to a file) - probably called something like
+``build_TS_array()``.
+
+TS adaptation fields will be a separate (internal) object. This means that
+``t.adaptation_field`` will simply be ``None`` if there is no adaptation field
+in the packet, which is the simplest way to represent that.
+
+.. vim: set filetype=rst tabstop=8 softtabstop=2 shiftwidth=2 expandtab:

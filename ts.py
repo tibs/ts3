@@ -277,10 +277,13 @@ class TSFile(TS):
         else:
             return 'TS reader for {!r}, closed'.format(self.name)
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    def close(self):
         if self._stream:
             self._stream.close()
             self._stream = None
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()
         if traceback:
             # An exception occurred - we don't have any extra tidying up
             # so just allow the exception to be re-raised
@@ -290,14 +293,24 @@ class ValidatingConstBitStream(ConstBitStream):
 
     def read_const(self, size, name, required_value):
         val = self.read(size)
-        if val != required_value:
+        if val.uint != required_value:
+            print(type(val), val)
+            print(type(required_value), required_value)
+            print(val == required_value)
             raise ValueError('Value {!r} of size {} is {} instead of {:#x}'.format(name,
                              size, val, required_value))
         return val
 
+    def read_reserved(self, size, name):
+        val = self.read(size)
+        b = Bits(val, length=size)
+        if not b.all():
+            raise ValueError('Value {!r} of size {} is {} but should be all bits set'.format(name,
+                             size, val))
+
     def read_range(self, size, name, min, max):
         val = self.read(size)
-        if not (min <= val <= max):
+        if not (min <= val.uint <= max):
             raise ValueError('Value {!r} of size {} is {} instead of {:#x}..{:#x}'.format(name,
                              size, val, min, max))
         return val
@@ -308,6 +321,9 @@ class ForgivingConstBitStream(ConstBitStream):
         return self.read(size)
 
     def read_range(self, size, name, min, max):
+        return self.read(size)
+
+    def read_reserved(self, size, name):
         return self.read(size)
 
 @export
@@ -326,7 +342,7 @@ class TSPacket:
     _pcr = None
 
     def __init__(self, buffer, index=None, offset=None, validating=False):
-        self.data = buffer
+        self.buffer = buffer
         self.offset = offset
         self.index = index
         self.validating = validating
@@ -354,27 +370,27 @@ class TSPacket:
         #    words.append('A')
         #elif self.payload:
         #    words.append('P')
-        data = self.data[3:]
-        for val in data[:11]:
+        buffer = self.buffer[3:]
+        for val in buffer[:11]:
             words.append('{:02x}'.format(val))
-        if len(data) > 11:
+        if len(buffer) > 11:
             words.append('...')
         return ' '.join(words)
 
     def __repr__(self):
-        return 'TSPacket("%s")'%_hexify_array(self.data)
+        return 'TSPacket("%s")'%_hexify_array(self.buffer)
 
     def __eq__(self, other):
-        return self.data == other.data
+        return self.buffer == other.buffer
 
     def __ne__(self, other):
-        return self.data != other.data
+        return self.buffer != other.buffer
 
     def _split(self):
         if self.validating:
-            bits = ValidatingConstBitStream(self.data)
+            bits = ValidatingConstBitStream(self.buffer)
         else:
-            bits = ForgivingConstBitStream(self.data)
+            bits = ForgivingConstBitStream(self.buffer)
 
         print(bits)
 
@@ -391,23 +407,37 @@ class TSPacket:
               transport_priority, pid, transport_scrambling_control,
               adaptation_field_control, continuity_counter)
 
+        if adaptation_field_control in (0b10, 0b11):
+            self.adapt = self._read_adaptation_field(bits)
+
+        if adaptation_field_control in (0b01, 0b11):
+            self.data = self._read_data_bytes(bits)
+
+        if self.validating:
+            # check that we don't have anything left
+            pass
+
+    def _read_adaptation_field(self, bits):
+        adaptation_field_length = bits.read(8)
+        if adaptation_field_length == 0:
+            return None             # is this the best thing to do?
+        discontinuity_indicator = bits.read(1)
+        random_access_indicator = bits.read(1)
+        elementary_stream_priority_indicator = bits.read(1)
+        PCR_flag = bits.read(1)
+        OPCR_flag = bits.read(1)
+        splicing_point_flag = bits.read(1)
+        transport_private_data_flag = bits.read(1)
+        adaptation_field_extension_flag = bits.read(1)
+        if PCR_flag:
+            program_clock_reference_base = bits.read(33)
+            reserved = bits.read_reserved(6, 'Reserved, after program_clock_reference_base')
+            program_clock_reference_extension = bits.read(9)
+
+    def _read_data_bytes(self, bits):
+        pass
+
 if __name__ == '__main__':
     print('Hello')
-
-    with TSFile('data/ed24p_11.ts') as f:
-        for p in f.pid_filter([0x32]):
-            print(p)
-            break
-
-        p = f.read()
-
-    p._split()
-    p.validating = True
-    p._split()
-
-    p = TSPacket([71] + 187*[0])
-    p._split()
-    p.validating = True
-    p._split()                  # Exception time
 
 # vim: set tabstop=8 softtabstop=4 shiftwidth=4 expandtab:
