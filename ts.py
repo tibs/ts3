@@ -264,8 +264,8 @@ class TSFile(TS):
           - 'x': Open the file for read and write. The file must not exist.
         """
         if mode not in (self._mode_translations.keys()):
-            raise ValueError('Mode {} is not {}'.format(repr(mode)),
-                             _as_strings(sorted(self._mode_translations.keys())))
+            raise ValueError('Mode {} is not {}'.format(repr(mode),
+                             _as_strings(sorted(self._mode_translations.keys()))))
         stream = open(filename, self._mode_translations[mode])
         super().__init__(stream, filename)
         self.mode = mode
@@ -348,10 +348,10 @@ class TSPacket:
         self.validating = validating
         # It's not a TS packet if it doesn't start with 0x47
         if buffer[0] != 0x47:
-            raise TSError('First byte of TS packet is {:#02x}, not 0x47'%(buffer[0]))
+            raise TSError('First byte of TS packet is {:#02x}, not 0x47'.format(buffer[0]))
         # And the length is well defined
         if len(buffer) != TS_PACKET_LEN:
-            raise TSError('TS packet is %d bytes long, not %d'%(len(buffer), TS_PACKET_LEN))
+            raise TSError('TS packet is {} bytes long, not {}'.format(len(buffer), TS_PACKET_LEN))
         # The PID is useful to know early on, and fairly easy to work out
         self.pid = ((buffer[1] & 0x1F) << 8) | buffer[2]
 

@@ -192,6 +192,43 @@ Once a file is done with, we can close it explicity:
       >>> print(dummy)
       TS packet PID 1fff 10 ff ff ff ff ff ff ff ff ff ff ...
 
+.. note:: I have found myself trying to use TS with a filename, so:
+
+      >>> TS('filename.ts')
+      Traceback (most recent call last):
+      ...
+      ValueError: First argument to TS, 'filename.ts', is a string, which does not have a "read" method - did you want TSFile instead?
+
+   and thus also:
+
+      >>> TS(34)            # something not a filename or a buffer
+      Traceback (most recent call last):
+      ...
+      ValueError: First argument to TS, 34, does not have a "read" method
+
+   TSFile only supports certain modes of opening - these are documented in its
+   docstring, but also:
+
+      >>> TSFile('somefile.ts', 'w+')
+      Traceback (most recent call last):
+      ValueError: Mode 'w+' is not 'r', 'w' or 'x'
+      >>> TSFile('somefile.ts', 'fred')
+      Traceback (most recent call last):
+      ...
+      ValueError: Mode 'fred' is not 'r', 'w' or 'x'
+
+   and finally two plausibility checks that are done immediately on TSPacket
+   initialisation:
+
+      >>> TSPacket([0x39] + 197*[0xff])
+      Traceback (most recent call last):
+      ...
+      ts.TSError: First byte of TS packet is 0x39, not 0x47
+      >>> TSPacket([0x47])
+      Traceback (most recent call last):
+      ...
+      ts.TSError: TS packet is 1 bytes long, not 188
+
 Notes for the next bit:
 
 TS packets have an internal structure. That structure is determined using the
