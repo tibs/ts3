@@ -8,6 +8,9 @@
 *.pyc
 *.pyo
 
+# HTML files from rst2html
+*.html
+
 # Something to do with test running
 __pycache__
 
